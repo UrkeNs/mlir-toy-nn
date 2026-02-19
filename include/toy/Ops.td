@@ -528,7 +528,7 @@ def MakeStructOp : Toy_Op<"make_struct", [Pure]> {
 
 //===----------------------------------------------------------------------===//
 // TrainOp
-// train(model, dataset, epochs)
+// train(model, dataset, epochs, learning_rate)
 // For now: returns the (updated) model. You can later change to return none.
 //===----------------------------------------------------------------------===//
 
@@ -544,18 +544,19 @@ def TrainOp : Toy_Op<"train"> {
   let arguments = (ins
     Toy_ModelType:$model,
     AnyTensor:$dataset,
-    I64Attr:$epochs
+    I64Attr:$epochs,
+    F64Attr:$learning_rate
   );
 
   let results = (outs
     Toy_ModelType:$result
   );
 
-  // IMPORTANT: include type($result) so parsing is unambiguous.
   let assemblyFormat = [{
-    `(` $model `,` $dataset `,` $epochs `)` attr-dict
+    `(` $model `,` $dataset `,` $epochs `,` $learning_rate `)` attr-dict
     `:` type($model) `,` type($dataset) `->` type($result)
   }];
+
 
   let hasVerifier = 1;
 }

@@ -281,15 +281,15 @@ struct LowerToyFuncByName : public mlir::ConversionPattern {
 
         // Convert block argument types inside the moved region
         if (failed(rewriter.convertRegionTypes(&newFunc.getBody(), *tc, &sigConv))) {
-        op->emitOpError("failed to convert region types");
-        return mlir::failure();
+          op->emitOpError("failed to convert region types");
+          return mlir::failure();
         }
 
         // Replace toy.return with func.return in the entry block
         mlir::Block &entry = newFunc.getBody().front();
-        if (!entry.mightHaveTerminator()) {
-        op->emitOpError("entry block missing terminator after move");
-        return mlir::failure();
+          if (!entry.mightHaveTerminator()) {
+          op->emitOpError("entry block missing terminator after move");
+          return mlir::failure();
         }
 
         rewriter.eraseOp(op);
@@ -1156,6 +1156,9 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
 
       Value modelValue = adaptor.getModel(); 
       Value dataset = adaptor.getDataset();
+      auto lrAttr = adaptor.getLearningRateAttr();
+      Value lrVal = rewriter.create<arith::ConstantOp>(
+        loc, rewriter.getF64Type(), lrAttr);
 
       auto memRefTy = llvm::dyn_cast<MemRefType>(dataset.getType());
       if (!memRefTy) {
@@ -1272,8 +1275,6 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
           // (A) "Load inputs" into activations for layer 0
           //     activations[0*maxDim + i] = x[i]
           // ------------------------------------------------------------
-          // Since you don't have dataset yet, we just write zeros as a placeholder.
-          // Later you will do: x = dataset[b, i] and store it here.
           scf::ForOp loadX = rewriter.create<scf::ForOp>(loc, c0, inIdx, c1);
           {
             OpBuilder::InsertionGuard guardX(rewriter);
@@ -1364,8 +1365,8 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
 
               Value accFinal = colLoop.getResult(0);
 
-              // apply tanh except on last affine layer
-              Value isLast = isLastLayer; // same condition as above
+              
+              Value isLast = isLastLayer; 
               scf::IfOp actIf = rewriter.create<scf::IfOp>(
                   loc, TypeRange{rewriter.getF64Type()}, isLast, /*withElse=*/true);
               {
@@ -1419,7 +1420,7 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
             // mseAcc += sq
             Value cur = rewriter.create<memref::LoadOp>(loc, mseAcc, ValueRange{});
             Value next = rewriter.create<arith::AddFOp>(loc, cur, sq);
-            rewriter.create<memref::StoreOp>(loc, next, mseAcc, ValueRange{});            
+            rewriter.create<memref::StoreOp>(loc, next, mseAcc, ValueRange{});                        
           }
 
           Value negativeBound = rewriter.create<arith::ConstantIndexOp>(loc, -1);
@@ -1577,10 +1578,7 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
         Value BF = rewriter.create<arith::IndexCastOp>(loc, rewriter.getI64Type(), BIdx);
         BF = rewriter.create<arith::SIToFPOp>(loc, f64, BF);
         
-        Value invB = rewriter.create<arith::DivFOp>(loc, one, BF);
-        
-        // --- LR constant (example: 0.01) ---
-        Value lr = rewriter.create<arith::ConstantOp>(loc, f64, rewriter.getFloatAttr(f64, /*LR=*/0.1));
+        Value invB = rewriter.create<arith::DivFOp>(loc, one, BF);        
         
         // for p in [0..numParams)
         scf::ForOp paramLoop =rewriter.create<scf::ForOp>(loc, c0, numParams, c1);
@@ -1596,7 +1594,7 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
         
           // params[p] -= lr * gAvg
           Value pp = rewriter.create<memref::LoadOp>(loc, params, ValueRange{p});
-          Value step = rewriter.create<arith::MulFOp>(loc, lr, gAvg);
+          Value step = rewriter.create<arith::MulFOp>(loc, lrVal, gAvg);
           Value newP = rewriter.create<arith::SubFOp>(loc, pp, step);
 
         
@@ -1616,12 +1614,19 @@ struct LowerTrainOp : OpConversionPattern<mlir::toy::TrainOp> {
         Value sse = rewriter.create<memref::LoadOp>(loc, mseAcc, ValueRange{});
         Value mse = rewriter.create<arith::DivFOp>(loc, sse, denom);
 
-        rewriter.create<memref::StoreOp>(loc, mse, mseAcc, ValueRange{});
-        rewriter.create<toy::PrintOp>(loc, mseAcc);
+        Value rmse = rewriter.create<math::SqrtOp>(loc, mse);
+
+        auto f64Ty = rewriter.getF64Type();
+        auto scalarMemrefTy = mlir::MemRefType::get({}, f64Ty);
+
+        Value rmseBuf = rewriter.create<memref::AllocaOp>(loc, scalarMemrefTy);
+        rewriter.create<memref::StoreOp>(loc, rmse, rmseBuf, ValueRange{});
+
+        rewriter.create<toy::PrintOp>(loc, rmseBuf);
         
       }
 
-      Value loweredModel = modelValue; // after cast to struct type
+      Value loweredModel = modelValue; 
 
 
       Type origResTy = op.getResult().getType(); // !toy.model

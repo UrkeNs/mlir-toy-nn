@@ -508,8 +508,6 @@ static mlir::toy::CreateModelOp findCreateModel(mlir::Value model) {
       return cm;
 
     if (auto tr = model.getDefiningOp<mlir::toy::TrainOp>()) {
-      // Adjust accessor if your TrainOp operand is named differently,
-      // but from your IR it is toy.train(%0, ...)
       model = tr.getOperand(0); // or tr.getModel() if tblgen made it
       continue;
     }
@@ -611,16 +609,13 @@ return success();
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult TrainOp::verify() {
-  // model must be !toy.model
   if (!llvm::isa<ModelType>(getModel().getType()))
     return emitOpError("first operand must be !toy.model");
 
-  // epochs is an attribute now (uint64_t in generated API)
   uint64_t e = getEpochs();
   if (e == 0)
     return emitOpError("epochs must be > 0");
 
-  // dataset checks (optional example)
   auto dsType = llvm::dyn_cast<mlir::RankedTensorType>(getDataset().getType());
   if (dsType && dsType.getRank() != 2)
     return emitOpError("expects dataset rank-2 tensor [batch, features+targets]");

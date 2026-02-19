@@ -65,6 +65,7 @@ namespace {
 /// analysis and transformation based on these high level semantics.
 class MLIRGenImpl {
 public:
+
   MLIRGenImpl(mlir::MLIRContext &context) : builder(&context) {}
 
   /// Public API: convert the AST for a Toy module (source file) to an MLIR
@@ -557,6 +558,8 @@ private:
 
   /// Emit a call expression. It emits specific operations for the `transpose`
   /// builtin. Other identifiers are assumed to be user-defined functions.
+
+  
   mlir::Value mlirGen(CallExprAST &call) {
     llvm::StringRef callee = call.getCallee();
     auto location = loc(call.loc());
@@ -577,7 +580,7 @@ private:
       if (!xVal)
         return nullptr;
     
-      // Optional: keep this language-level check
+      
       auto xType = llvm::dyn_cast<mlir::RankedTensorType>(xVal.getType());
       if (!xType || xType.getRank() != 2) {
         emitError(location,
@@ -589,12 +592,9 @@ private:
       auto elemTy = xType.getElementType();
       auto resTy = mlir::UnrankedTensorType::get(elemTy);
     
-      // IMPORTANT: create PredictOp with UNRANKED result
+     
       return builder.create<mlir::toy::PredictOp>(location, resTy, modelVal, xVal);
     }
-   
-
-    
     
     if (callee == "create_model") {
       auto cfgOpt = parseSequentialConfig(call);
@@ -611,9 +611,9 @@ private:
     }
 
     if (callee == "train") {
-      if (call.getArgs().size() != 3) {
+      if (call.getArgs().size() != 4) {
         emitError(location,
-                  "toy.train expects 3 arguments: train(model, dataset, epochs)");
+                  "toy.train expects 4 arguments: train(model, dataset, epochs, lr)");
         return nullptr;
       }
     
@@ -627,8 +627,7 @@ private:
       if (!dataVal)
         return nullptr;
     
-      // Arg2: epochs (must be an integer literal in Toy -> NumberExprAST with .0)
-      // We'll parse it like you do for create_model.
+      // Arg2: epochs
       auto getInt = [&](ExprAST *e) -> std::optional<int64_t> {
         if (auto *num = llvm::dyn_cast<NumberExprAST>(e)) {
           double v = num->getValue();
@@ -646,9 +645,22 @@ private:
                   "toy.train expects epochs to be a positive integer literal");
         return nullptr;
       }
-    
+
       // Materialize epochs as i64 constant value
       auto epochsAttr = builder.getI64IntegerAttr(*epochsOpt);
+
+      //Arg4: learning rate
+      double lrOpt = 0.0;
+      if (auto *lit = dyn_cast<toy::NumberExprAST>(call.getArgs()[3].get())) {
+          lrOpt = lit->getValue(); // if your NumberExprAST stores double
+          if(!lrOpt || lrOpt <= 0.0){
+            emitError(location,
+              "toy.train expects learning rate to be a positive float literal");
+              return nullptr;
+          }
+      }
+
+      auto lrAttr = builder.getF64FloatAttr(lrOpt);
     
       // Emit train op, returns !toy.model
       return builder.create<mlir::toy::TrainOp>(
@@ -656,7 +668,8 @@ private:
         modelVal.getType(),  // result type
         modelVal,
         dataVal,
-        epochsAttr);
+        epochsAttr,
+        lrAttr);
     }
     
 
